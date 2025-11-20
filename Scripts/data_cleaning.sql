@@ -1,17 +1,21 @@
 -- ================================================================
 -- Script: staging_retail_data_cleaning.sql
--- Purpose: Data cleaning and type correction for the staging_retail table
--- Notes: This script is designed to prepare the raw CSV data loaded 
---        via SSIS into the staging_retail table for downstream 
---        processing in the Data Warehouse.
+-- Purpose: Prepare raw CSV retail transaction data for loading into
+--          the Data Warehouse. This includes data cleaning,
+--          type correction, and basic validation.
+
 -- ================================================================
+
+-- Drop existing staging table if exists to ensure a fresh start
+IF OBJECT_ID('staging_retail', 'U') IS NOT NULL
+    DROP TABLE staging_retail;
 
 -- ================================================================
 -- 1. Create the staging table to hold raw CSV data
 -- ================================================================
 CREATE TABLE staging_retail (
     Transaction_ID BIGINT,           -- Unique transaction identifier
-    Date NVARCHAR(255),              -- Transaction date as text (initially), to be converted to datetime2
+    Date NVARCHAR(255),              -- Transaction date as text (to be converted later)
     Customer_Name NVARCHAR(255),     -- Customer's full name
     Total_Items INT,                 -- Number of items in the transaction
     Total_Cost DECIMAL(10,2),       -- Total cost of the transaction
@@ -25,49 +29,64 @@ CREATE TABLE staging_retail (
     ProductName NVARCHAR(255)        -- Individual product purchased
 );
 
--- Verify table creation (expected to be empty at this point)
-SELECT * FROM staging_retail;
+-- Quick verification that the table is empty
+SELECT TOP 10 * FROM staging_retail;
 
 -- ================================================================
--- 2. Convert the Date column to datetime2
---    - The CSV import sets all columns as text (NVARCHAR)
---    - Converting to datetime2 preserves full timestamp precision
+-- 2. Bulk load CSV data into staging table
 -- ================================================================
+BULK INSERT staging_retail
+FROM 'D:\DE Projects General\synthetic-retail-data-\data\Retail_Transactions_Dataset.csv'
+WITH (
+    FORMAT = 'CSV',
+    FIRSTROW = 2,        -- Skip header row
+    FIELDTERMINATOR = ',', 
+    ROWTERMINATOR = '\n',
+    TABLOCK
+);
+
+-- ================================================================
+-- 3. Convert Date column to datetime2 for precision
+-- ================================================================
+-- Add a new column to store datetime values
 ALTER TABLE staging_retail
-ALTER COLUMN Date datetime2;
+ADD Date_new datetime2;
+
+-- Populate the new column with converted date values
+UPDATE TOP (100000) staging_retail
+SET Date_new = TRY_CONVERT(datetime2, Date)
+WHERE Date_new IS NULL;
+
+-- Drop the old NVARCHAR column and rename the new one
+ALTER TABLE staging_retail
+DROP COLUMN Date;
+
+EXEC sp_rename 'staging_retail.Date_new', 'Date', 'COLUMN';
+
+-- Verify successful conversion
+SELECT COLUMN_NAME, DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'staging_retail' 
+  AND COLUMN_NAME = 'Date';
 
 -- ================================================================
--- 3. Handle NULL and invalid values in Total_Cost
---    - Set Total_Cost to 0 where NULL to avoid errors during calculations
+-- 4. Handle NULL values and invalid Total_Cost
 -- ================================================================
+-- Set Total_Cost to 0 where NULL to prevent calculation errors
 UPDATE staging_retail
 SET Total_Cost = 0
 WHERE Total_Cost IS NULL;
 
--- ================================================================
--- 4. Remove invalid or incomplete records
---    - Delete rows with missing or invalid date or cost
---    - Total_Cost <= 0 is considered invalid for analysis
--- ================================================================
+-- Delete invalid rows where Date is NULL or Total_Cost is 0 or negative
 DELETE FROM staging_retail
 WHERE Date IS NULL 
    OR Total_Cost IS NULL 
    OR Total_Cost <= 0;
 
 -- ================================================================
--- 5. Verify the data type of the Date column
---    - Ensures ALTER TABLE was applied successfully
+-- 5. Correct Total_Items column
 -- ================================================================
-SELECT COLUMN_NAME, DATA_TYPE
-FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = 'staging_retail'
-  AND COLUMN_NAME = 'Date';
-
--- ================================================================
--- 6. Correct Total_Items column
---    - Compute the actual number of products per transaction
---    - Update Total_Items to match the true item count
--- ================================================================
+-- Recalculate the actual number of products per transaction
 WITH ActualCounts AS (
     SELECT 
         Transaction_ID,
@@ -81,12 +100,7 @@ FROM staging_retail s
 JOIN ActualCounts a
     ON s.Transaction_ID = a.Transaction_ID;
 
--- ================================================================
--- 7. Validation check for Total_Items
---    - Identify any transactions where Total_Items does not match
---      the actual number of products
---    - Returns 0 rows if all counts are consistent
--- ================================================================
+-- Validation: Ensure Total_Items matches actual count
 WITH ActualCounts AS (
     SELECT 
         Transaction_ID,
@@ -102,15 +116,41 @@ WHERE s.Total_Items <> a.Actual_Items
 GROUP BY s.Transaction_ID, s.Total_Items, a.Actual_Items;
 
 -- ================================================================
--- 8. Handle missing promotions
---    - Replace NULL promotion values with a default value for consistency
+-- 6. Handle missing promotions
 -- ================================================================
+-- Replace NULL Promotion values with 'No promotion' for consistency
 UPDATE staging_retail
 SET Promotion = 'No promotion'
 WHERE Promotion IS NULL;
 
 -- ================================================================
--- 9. Sample data check
---    - Inspect top 10 rows to validate cleaning operations
+-- 7. Convert Discount_Applied to BIT
 -- ================================================================
+-- Step 1: Replace textual True/False with numeric 1/0
+UPDATE TOP (100000) staging_retail
+SET Discount_Applied = CASE Discount_Applied
+                        WHEN 'True'  THEN 1
+                        WHEN 'False' THEN 0
+                      END
+WHERE Discount_Applied IN ('True','False');
+
+-- Step 2: Create new BIT column
+ALTER TABLE staging_retail
+ADD Discount_Applied_New BIT;
+
+-- Step 3: Convert numeric flag to BIT
+UPDATE TOP (100000) staging_retail
+SET Discount_Applied_New = TRY_CONVERT(BIT, Discount_Applied)
+WHERE Discount_Applied_New IS NULL;
+
+-- Step 4: Drop old column and rename new column
+ALTER TABLE staging_retail
+DROP COLUMN Discount_Applied;
+
+EXEC sp_rename 'staging_retail.Discount_Applied_New', 'Discount_Applied', 'COLUMN';
+
+-- ================================================================
+-- 8. Sample verification
+-- ================================================================
+-- Inspect top 10 rows to validate data cleaning
 SELECT TOP 10 * FROM staging_retail;
