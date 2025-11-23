@@ -96,33 +96,12 @@ CREATE TABLE fact_transactions (
         FOREIGN KEY (customer_id_sk_fk) REFERENCES customer_dim (customer_id_sk),
 
     CONSTRAINT FK_fact_store 
-        FOREIGN KEY (store_sk_fk) REFERENCES store_dim (store_sk)
+        FOREIGN KEY (store_sk_fk) REFERENCES store_dim (store_sk),
+
+    CONSTRAINT FK_fact_product 
+        FOREIGN KEY (item_id_fk) REFERENCES product_dim (product_sk)
 );
 GO
 
 
-/* ============================================================
-   BRIDGE TABLE
-   ============================================================ */
 
----------------------------------------------------------------
--- Product–Transaction Bridge
--- Resolves the many-to-many relationship between transactions
--- and products (each transaction can contain multiple products).
--- Composite PK ensures uniqueness of product entries per transaction.
----------------------------------------------------------------
-CREATE TABLE product_transactions_bridge (
-    transaction_id_fk BIGINT NOT NULL,           -- FK → Fact table
-    product_sk_fk INT NOT NULL,                  -- FK → Product dimension
-
-    CONSTRAINT PK_product_transactions_bridge 
-        PRIMARY KEY (transaction_id_fk, product_sk_fk), -- Composite PK
-
-    -- Foreign Keys
-    CONSTRAINT FK_bridge_transaction 
-        FOREIGN KEY (transaction_id_fk) REFERENCES fact_transactions (transaction_id),
-
-    CONSTRAINT FK_bridge_product 
-        FOREIGN KEY (product_sk_fk) REFERENCES product_dim (product_sk)
-);
-GO
