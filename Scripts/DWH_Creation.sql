@@ -85,6 +85,8 @@ CREATE TABLE fact_transactions (
     total_items INT NOT NULL,                    -- Number of items in the transaction
     total_cost DECIMAL(8, 2) NOT NULL,           -- Total purchase amount
     payment_method NVARCHAR(255) NOT NULL,       -- Payment channel (no dimension)
+    item_id_fk int not null,                     -- Product id fk
+    item_count int not null,                     -- count of a product occurence within a transaction
 
     CONSTRAINT PK_fact_transactions PRIMARY KEY (transaction_id),
 
