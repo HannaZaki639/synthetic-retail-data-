@@ -154,3 +154,5 @@ EXEC sp_rename 'staging_retail.Discount_Applied_New', 'Discount_Applied', 'COLUM
 -- ================================================================
 -- Inspect top 10 rows to validate data cleaning
 SELECT TOP 10 * FROM staging_retail;
+
+
